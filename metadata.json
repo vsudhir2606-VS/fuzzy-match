@@ -1,0 +1,5 @@
+{
+  "name": "FuzzyMatch Pro: Customer & RPL Lookup",
+  "description": "A high-performance tool for matching customer records against Restricted Party Lists (RPL) using advanced fuzzy string algorithms and AI-powered cleaning.",
+  "requestFramePermissions": []
+}
