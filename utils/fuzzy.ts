@@ -17,6 +17,23 @@ export function getSimilarity(str1: string, str2: string): number {
   return (2 * intersection) / (bigrams1.length + bigrams2.length);
 }
 
+/**
+ * Finds common words between two strings, ignoring common business suffixes.
+ */
+export function getCommonWords(str1: string, str2: string): string[] {
+  const tokenize = (s: string) => 
+    s.toLowerCase()
+     .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
+     .split(/\s+/)
+     .filter(w => w.length > 1 && !['ltd', 'co', 'inc', 'corp', 'limited', 'llc', 'plc', 'and', 'the'].includes(w));
+
+  const words1 = tokenize(str1);
+  const words2 = tokenize(str2);
+  const set2 = new Set(words2);
+  
+  return Array.from(new Set(words1.filter(word => set2.has(word))));
+}
+
 function cleanString(str: string): string {
   // Normalize and remove common business suffixes for better matching
   return str

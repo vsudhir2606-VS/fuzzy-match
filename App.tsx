@@ -12,10 +12,11 @@ import {
   Info,
   ArrowRightLeft,
   Table as TableIcon,
-  Eye
+  Eye,
+  Layers
 } from 'lucide-react';
 import { FileUpload } from './components/FileUpload';
-import { getSimilarity } from './utils/fuzzy';
+import { getSimilarity, getCommonWords } from './utils/fuzzy';
 import { RawDataRow, AppState } from './types';
 
 interface ExtendedMatchResult {
@@ -23,6 +24,7 @@ interface ExtendedMatchResult {
   customerName: string;
   rplMatch: string;
   similarity: number;
+  commonWords: string[];
 }
 
 const App: React.FC = () => {
@@ -64,9 +66,6 @@ const App: React.FC = () => {
     setProcessingProgress(0);
 
     const matches: ExtendedMatchResult[] = [];
-    
-    // We keep unique RPL entries to speed up the cross-lookup, 
-    // but we process EVERY row in the raw data (no deduplication of customers).
     const uniqueRPLs = Array.from(new Set(rawData.map(r => String(r[rplCol] || '')).filter(Boolean)));
     const total = rawData.length;
     
@@ -91,7 +90,8 @@ const App: React.FC = () => {
         originalRow: row,
         customerName: cust,
         rplMatch: bestMatch,
-        similarity: parseFloat(bestScore.toFixed(4))
+        similarity: parseFloat(bestScore.toFixed(4)),
+        commonWords: bestMatch ? getCommonWords(cust, bestMatch) : []
       });
 
       if (i % 25 === 0 || i === total - 1) {
@@ -105,10 +105,9 @@ const App: React.FC = () => {
   };
 
   const exportToExcel = () => {
-    // Construct export data: Original Columns + Match Results
     const exportData = results.map(r => ({
       ...r.originalRow,
-      'MATCHED_RPL_NAME': r.rplMatch,
+      'COMMON_WORDS': r.commonWords.join(", "),
       'MATCH_SIMILARITY': r.similarity,
       'RISK_LEVEL': r.similarity > 0.85 ? 'CRITICAL' : r.similarity > 0.65 ? 'HIGH' : 'LOW'
     }));
@@ -151,7 +150,7 @@ const App: React.FC = () => {
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-8">
               <h2 className="text-3xl font-extrabold text-gray-900 mb-3 tracking-tight">Customer & RPL Lookup</h2>
-              <p className="text-gray-600">Upload your raw data file. We will compare every row to find matching restricted parties without removing any duplicates.</p>
+              <p className="text-gray-600">Upload your raw data file. We will compare every row to find matching restricted parties based on common vocabulary.</p>
             </div>
             <FileUpload onDataLoaded={handleDataLoaded} isLoading={false} />
           </div>
@@ -241,7 +240,7 @@ const App: React.FC = () => {
           <div className="max-w-md mx-auto text-center py-20">
             <RefreshCw className="mx-auto text-indigo-600 animate-spin mb-6" size={48} />
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Processing Data...</h2>
-            <p className="text-gray-500 mb-8">Comparing every row against the restricted party list.</p>
+            <p className="text-gray-500 mb-8">Comparing every row and extracting common match words.</p>
             <div className="w-full bg-gray-100 rounded-full h-4 mb-4">
               <div 
                 className="bg-indigo-600 h-4 rounded-full transition-all duration-300" 
@@ -257,7 +256,7 @@ const App: React.FC = () => {
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Analysis Complete</h2>
-                <p className="text-gray-500">Processed {results.length} rows from your original data.</p>
+                <p className="text-gray-500">Processed {results.length} rows. Results focus on common vocabulary overlaps.</p>
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex flex-col gap-1">
@@ -290,18 +289,30 @@ const App: React.FC = () => {
                     <tr className="border-b shadow-sm">
                       <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">#</th>
                       <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Input Customer</th>
-                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Best RPL Match</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Common Words Matched</th>
                       <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-center">Score</th>
-                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-center">Status</th>
+                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-center">Risk</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {filteredResults.length > 0 ? (
                       filteredResults.map((result, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                        <tr key={idx} className="hover:bg-gray-50 transition-colors group">
                           <td className="px-6 py-4 text-xs font-mono text-gray-400">{idx + 1}</td>
-                          <td className="px-6 py-4 font-medium text-gray-900">{result.customerName}</td>
-                          <td className="px-6 py-4 text-gray-600">{result.rplMatch || <span className="text-gray-300 italic">No match</span>}</td>
+                          <td className="px-6 py-4 font-semibold text-gray-900">{result.customerName}</td>
+                          <td className="px-6 py-4">
+                            <div className="flex flex-wrap gap-1">
+                              {result.commonWords.length > 0 ? (
+                                result.commonWords.map((word, wIdx) => (
+                                  <span key={wIdx} className="bg-indigo-50 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded border border-indigo-100 font-medium">
+                                    {word}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-gray-300 text-xs italic">No overlapping terms</span>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-6 py-4 text-center">
                             <span className={`inline-block px-2 py-0.5 rounded text-xs font-mono font-bold border ${
                               result.similarity > 0.8 ? 'bg-red-50 text-red-700 border-red-100' :
@@ -313,12 +324,19 @@ const App: React.FC = () => {
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex justify-center">
+                              {/* Fix: Wrapped Lucide icons in spans with title attributes because 'title' is not a valid prop for Lucide components */}
                               {result.similarity > 0.85 ? (
-                                <AlertTriangle className="text-red-500" size={18} />
+                                <span title="Critical Risk Match">
+                                  <AlertTriangle className="text-red-500" size={18} />
+                                </span>
                               ) : result.similarity > 0.65 ? (
-                                <Info className="text-amber-500" size={18} />
+                                <span title="High Potential Match">
+                                  <Info className="text-amber-500" size={18} />
+                                </span>
                               ) : (
-                                <CheckCircle2 className="text-emerald-500" size={18} />
+                                <span title="Low Similarity">
+                                  <CheckCircle2 className="text-emerald-500" size={18} />
+                                </span>
                               )}
                             </div>
                           </td>
@@ -339,11 +357,11 @@ const App: React.FC = () => {
             
             <div className="flex items-center justify-between text-sm text-gray-500 bg-gray-50 p-4 rounded-xl border">
               <div className="flex gap-4">
-                <span className="flex items-center gap-1.5"><TableIcon size={14} /> {filteredResults.length} of {results.length} rows displayed</span>
+                <span className="flex items-center gap-1.5"><TableIcon size={14} /> {filteredResults.length} rows displayed</span>
                 <span className="opacity-50">|</span>
-                <span>Algorithm: Dice Coefficient</span>
+                <span className="flex items-center gap-1.5"><Layers size={14} /> Total rows: {results.length}</span>
               </div>
-              <p className="italic text-xs font-medium text-indigo-600">Note: Export contains all original columns from your uploaded file.</p>
+              <p className="italic text-xs font-medium text-indigo-600 text-right max-w-xs">Matches are based on terminology overlap across the Restricted Party List.</p>
             </div>
           </div>
         )}
@@ -353,13 +371,13 @@ const App: React.FC = () => {
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 shadow-xl flex justify-center z-10">
            <div className="max-w-7xl w-full flex items-center justify-between px-4">
              <div className="hidden sm:block text-sm text-gray-500">
-               Audit results and export the full matched dataset back to Excel.
+               Review terminology overlaps and export your final report.
              </div>
              <div className="flex gap-3">
-               <button onClick={reset} className="px-6 py-2 rounded-lg border font-bold text-gray-600 hover:bg-gray-50">
+               <button onClick={reset} className="px-6 py-2 rounded-lg border font-bold text-gray-600 hover:bg-gray-50 transition-colors">
                  New Analysis
                </button>
-               <button onClick={exportToExcel} className="px-8 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 flex items-center gap-2">
+               <button onClick={exportToExcel} className="px-8 py-2 rounded-lg bg-indigo-600 text-white font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-200 flex items-center gap-2 transition-all active:scale-95">
                  Download Excel Report <ChevronRight size={18} />
                </button>
              </div>
