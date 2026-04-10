@@ -16,7 +16,6 @@ import {
   Layers
 } from 'lucide-react';
 import { FileUpload } from './components/FileUpload';
-import { getSimilarity, getCommonWords } from './utils/fuzzy';
 import { RawDataRow, AppState } from './types';
 
 interface ExtendedMatchResult {
@@ -65,43 +64,32 @@ const App: React.FC = () => {
     setAppState(AppState.PROCESSING);
     setProcessingProgress(0);
 
-    const matches: ExtendedMatchResult[] = [];
-    const uniqueRPLs = Array.from(new Set(rawData.map(r => String(r[rplCol] || '')).filter(Boolean)));
-    const total = rawData.length;
-    
-    for (let i = 0; i < total; i++) {
-      const row = rawData[i];
-      const cust = String(row[customerCol] || '');
-      let bestMatch = "";
-      let bestScore = 0;
+    const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 
-      if (cust.trim()) {
-        for (const rpl of uniqueRPLs) {
-          const score = getSimilarity(cust, rpl);
-          if (score > bestScore) {
-            bestScore = score;
-            bestMatch = rpl;
-          }
-          if (bestScore === 1.0) break;
-        }
+    worker.onmessage = (e) => {
+      const { type, progress, results: workerResults } = e.data;
+      if (type === 'PROGRESS') {
+        setProcessingProgress(progress);
+      } else if (type === 'CHUNK') {
+        setResults(prev => [...prev, ...workerResults]);
+      } else if (type === 'COMPLETE') {
+        setResults(prev => [...prev, ...workerResults]);
+        setAppState(AppState.RESULTS);
+        worker.terminate();
       }
+    };
 
-      matches.push({
-        originalRow: row,
-        customerName: cust,
-        rplMatch: bestMatch,
-        similarity: parseFloat(bestScore.toFixed(4)),
-        commonWords: bestMatch ? getCommonWords(cust, bestMatch) : []
-      });
+    worker.onerror = (err) => {
+      console.error('Worker error:', err);
+      setAppState(AppState.MAPPING);
+      worker.terminate();
+    };
 
-      if (i % 25 === 0 || i === total - 1) {
-        setProcessingProgress(Math.round(((i + 1) / total) * 100));
-        await new Promise(r => setTimeout(r, 0));
-      }
-    }
-
-    setResults(matches);
-    setAppState(AppState.RESULTS);
+    worker.postMessage({
+      rawData,
+      customerCol,
+      rplCol
+    });
   };
 
   const exportToExcel = () => {
@@ -119,7 +107,7 @@ const App: React.FC = () => {
   };
 
   const filteredResults = useMemo(() => {
-    return results.filter(r => r.similarity >= threshold);
+    return results.filter(r => r.similarity >= threshold).slice(0, 500);
   }, [results, threshold]);
 
   return (
@@ -256,7 +244,7 @@ const App: React.FC = () => {
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Analysis Complete</h2>
-                <p className="text-gray-500">Processed {results.length} rows. Results focus on common vocabulary overlaps.</p>
+                <p className="text-gray-500">Processed {results.length} rows. Showing top 500 matches above threshold.</p>
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex flex-col gap-1">
@@ -284,59 +272,51 @@ const App: React.FC = () => {
 
             <div className="bg-white border rounded-2xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                <table className="w-full text-left border-collapse sticky-header">
+                <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 bg-gray-50 z-10">
-                    <tr className="border-b shadow-sm">
-                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">#</th>
-                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Input Customer</th>
-                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Common Words Matched</th>
-                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-center">Score</th>
-                      <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-center">Risk</th>
+                    <tr className="border-b">
+                      <th className="px-6 py-4 text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono">#</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono">Input Customer</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono">RPL Match</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono text-center">Score</th>
+                      <th className="px-6 py-4 text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono text-center">Risk</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y">
+                  <tbody className="divide-y divide-gray-100">
                     {filteredResults.length > 0 ? (
                       filteredResults.map((result, idx) => (
                         <tr key={idx} className="hover:bg-gray-50 transition-colors group">
-                          <td className="px-6 py-4 text-xs font-mono text-gray-400">{idx + 1}</td>
-                          <td className="px-6 py-4 font-semibold text-gray-900">{result.customerName}</td>
+                          <td className="px-6 py-4 text-xs font-mono text-gray-300">{idx + 1}</td>
                           <td className="px-6 py-4">
-                            <div className="flex flex-wrap gap-1">
-                              {result.commonWords.length > 0 ? (
-                                result.commonWords.map((word, wIdx) => (
-                                  <span key={wIdx} className="bg-indigo-50 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded border border-indigo-100 font-medium">
-                                    {word}
-                                  </span>
-                                ))
-                              ) : (
-                                <span className="text-gray-300 text-xs italic">No overlapping terms</span>
-                              )}
+                            <div className="font-medium text-gray-900">{result.customerName}</div>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {result.commonWords.map((word, wIdx) => (
+                                <span key={wIdx} className="text-[9px] text-indigo-500 font-bold uppercase tracking-tighter">
+                                  {word}
+                                </span>
+                              ))}
                             </div>
                           </td>
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-gray-600">{result.rplMatch}</div>
+                          </td>
                           <td className="px-6 py-4 text-center">
-                            <span className={`inline-block px-2 py-0.5 rounded text-xs font-mono font-bold border ${
-                              result.similarity > 0.8 ? 'bg-red-50 text-red-700 border-red-100' :
-                              result.similarity > 0.5 ? 'bg-amber-50 text-amber-700 border-amber-100' :
-                              'bg-green-50 text-green-700 border-green-100'
+                            <span className={`font-mono text-sm font-bold ${
+                              result.similarity > 0.8 ? 'text-red-600' :
+                              result.similarity > 0.5 ? 'text-amber-600' :
+                              'text-emerald-600'
                             }`}>
                               {result.similarity.toFixed(4)}
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex justify-center">
-                              {/* Fix: Wrapped Lucide icons in spans with title attributes because 'title' is not a valid prop for Lucide components */}
                               {result.similarity > 0.85 ? (
-                                <span title="Critical Risk Match">
-                                  <AlertTriangle className="text-red-500" size={18} />
-                                </span>
+                                <div className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
                               ) : result.similarity > 0.65 ? (
-                                <span title="High Potential Match">
-                                  <Info className="text-amber-500" size={18} />
-                                </span>
+                                <div className="w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" />
                               ) : (
-                                <span title="Low Similarity">
-                                  <CheckCircle2 className="text-emerald-500" size={18} />
-                                </span>
+                                <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
                               )}
                             </div>
                           </td>
@@ -346,7 +326,7 @@ const App: React.FC = () => {
                       <tr>
                         <td colSpan={5} className="px-6 py-20 text-center text-gray-400">
                           <FileSearch size={48} className="mx-auto mb-4 opacity-20" />
-                          <p>No matches found above threshold {threshold}</p>
+                          <p className="font-mono text-xs uppercase tracking-widest">No matches found above threshold {threshold}</p>
                         </td>
                       </tr>
                     )}

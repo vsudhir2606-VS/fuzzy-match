@@ -15,8 +15,8 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isLoading 
 
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
+      const dataArr = evt.target?.result;
+      const wb = XLSX.read(dataArr, { type: 'array' });
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
       const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
@@ -33,7 +33,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded, isLoading 
         onDataLoaded(rows, headers);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   }, [onDataLoaded]);
 
   return (
